@@ -1,5 +1,5 @@
 {
-  "name": "@bunner/treemonkey",
+  "name": "@zipbul/tree-monkey",
   "module": "index.ts",
   "type": "module",
   "devDependencies": {
