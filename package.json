@@ -1,5 +1,5 @@
 {
-  "name": "@zipbul/tree-monkey",
+  "name": "@zipbul/code-ledger",
   "module": "index.ts",
   "type": "module",
   "devDependencies": {

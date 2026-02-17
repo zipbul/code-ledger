@@ -1,4 +1,4 @@
-# PLAN — @zipbul/tree-monkey
+# PLAN — @zipbul/code-ledger
 
 > **Status**: Draft v3.2 — 2026-02-17  
 > **One-line definition**: Watch, parse, index, and search a codebase — shared infrastructure for static analysis tools.
@@ -9,9 +9,9 @@
 
 zipbul, firebat, and agent-kit all require the same capabilities: file change detection, TypeScript AST parsing, code symbol indexing, and code search. Duplicating these across packages wastes effort and OS resources when running simultaneously on the same project.
 
-tree-monkey is the **shared L0 foundation**. It owns the code infrastructure layer so every consumer imports tree-monkey instead of reimplementing.
+code-ledger is the **shared L0 foundation**. It owns the code infrastructure layer so every consumer imports code-ledger instead of reimplementing.
 
-**tree-monkey does NOT**:
+**code-ledger does NOT**:
 
 - Start an MCP server or export MCP tool definitions.
 - Depend on any consumer framework (zipbul, firebat, agent-kit).
@@ -21,20 +21,20 @@ tree-monkey is the **shared L0 foundation**. It owns the code infrastructure lay
 
 ## 2. Fixed Paths
 
-All tree-monkey artifacts live under `{projectRoot}/.zipbul/`. There is no `cacheDir` option.
+All code-ledger artifacts live under `{projectRoot}/.zipbul/`. There is no `cacheDir` option.
 
 | Artifact | Path |
 |---|---|
-| SQLite database | `.zipbul/tree-monkey.db` |
-| WAL file | `.zipbul/tree-monkey.db-wal` |
-| SHM file | `.zipbul/tree-monkey.db-shm` |
+| SQLite database | `.zipbul/code-ledger.db` |
+| WAL file | `.zipbul/code-ledger.db-wal` |
+| SHM file | `.zipbul/code-ledger.db-shm` |
 
 ---
 
 ## 3. Configuration
 
 ```typescript
-interface TreeMonkeyOptions {
+interface CodeLedgerOptions {
   /** Absolute path to the project root directory. Required. */
   projectRoot: string;
 
@@ -51,7 +51,7 @@ interface TreeMonkeyOptions {
 
 ### 3.1 Project Detection Policy
 
-tree-monkey automatically discovers project boundaries from `package.json` files. No manual configuration required.
+code-ledger automatically discovers project boundaries from `package.json` files. No manual configuration required.
 
 **Single repo**: One `package.json` at project root → `project = root package name`.
 
@@ -73,7 +73,7 @@ tree-monkey automatically discovers project boundaries from `package.json` files
 ├── scripts/
 │   └── deploy.ts            → nearest package.json = root → project = '@ws/root'
 ├── package.json             ← name: "@ws/root"    → root project
-└── .zipbul/tree-monkey.db   ← one DB for entire workspace
+└── .zipbul/code-ledger.db   ← one DB for entire workspace
 ```
 
 **Rule**: A file's `project` = the `name` field of the nearest ancestor `package.json`.
@@ -116,24 +116,24 @@ Algorithm:
 
 ## 4. Error Handling Policy
 
-**All errors are thrown. tree-monkey never swallows errors silently.**
+**All errors are thrown. code-ledger never swallows errors silently.**
 
-Each module defines its own error class extending a base `TreeMonkeyError`. This enables consumers to catch errors by module.
+Each module defines its own error class extending a base `CodeLedgerError`. This enables consumers to catch errors by module.
 
 ```typescript
-class TreeMonkeyError extends Error {
+class CodeLedgerError extends Error {
   constructor(message: string, options?: ErrorOptions) {
     super(message, options);
-    this.name = 'TreeMonkeyError';
+    this.name = 'CodeLedgerError';
   }
 }
 
-class WatcherError extends TreeMonkeyError { name = 'WatcherError'; }
-class ParseError extends TreeMonkeyError { name = 'ParseError'; }
-class ExtractError extends TreeMonkeyError { name = 'ExtractError'; }
-class IndexError extends TreeMonkeyError { name = 'IndexError'; }
-class StoreError extends TreeMonkeyError { name = 'StoreError'; }
-class SearchError extends TreeMonkeyError { name = 'SearchError'; }
+class WatcherError extends CodeLedgerError { name = 'WatcherError'; }
+class ParseError extends CodeLedgerError { name = 'ParseError'; }
+class ExtractError extends CodeLedgerError { name = 'ExtractError'; }
+class IndexError extends CodeLedgerError { name = 'IndexError'; }
+class StoreError extends CodeLedgerError { name = 'StoreError'; }
+class SearchError extends CodeLedgerError { name = 'SearchError'; }
 ```
 
 Every `throw` wraps the original error via `{ cause: originalError }` so stack traces chain.
@@ -145,7 +145,7 @@ Every `throw` wraps the original error via `{ cause: originalError }` so stack t
 ```
 src/
 ├── index.ts                          # Public API barrel re-export.
-├── errors.ts                         # TreeMonkeyError + all subclass definitions.
+├── errors.ts                         # CodeLedgerError + all subclass definitions.
 │
 ├── watcher/
 │   ├── index.ts                      # Re-export: ProjectWatcher.
@@ -799,7 +799,7 @@ Each symbol looks for a **leading JSDoc comment** using positional association:
 3. If no JSDoc block found or no @see tags → seeLinks is undefined.
 ```
 
-This replaces the zipbul approach of scanning the entire file text with regex. tree-monkey associates `@see` tags to their **specific symbol**, not to the file.
+This replaces the zipbul approach of scanning the entire file text with regex. code-ledger associates `@see` tags to their **specific symbol**, not to the file.
 
 **Span calculation**: `getLineColumn(lineOffsets, node.start)` / `getLineColumn(lineOffsets, node.end)` where `lineOffsets = buildLineOffsets(sourceText)`.
 
@@ -877,7 +877,7 @@ Algorithm:
 
 #### Entity key conventions
 
-In tree-monkey relations, keys use **file paths** (relative to project root) and **symbol names** rather than the zipbul `module:` / `symbol:` prefix system. This simplifies the schema:
+In code-ledger relations, keys use **file paths** (relative to project root) and **symbol names** rather than the zipbul `module:` / `symbol:` prefix system. This simplifies the schema:
 
 - `srcFilePath` / `dstFilePath`: Relative path from project root.
 - `srcSymbolName` / `dstSymbolName`: Symbol name, or `null` for module-level.
@@ -978,7 +978,7 @@ For each element in `implements`:
 
 **Constructor**: `new DbConnection(options: { projectRoot: string })`
 
-- `this.dbPath = path.join(projectRoot, '.zipbul', 'tree-monkey.db')`
+- `this.dbPath = path.join(projectRoot, '.zipbul', 'code-ledger.db')`
 - Connection is NOT opened in constructor. Call `open()` explicitly.
 
 **Methods**:
@@ -1498,7 +1498,7 @@ Generic LRU cache using `Map` insertion-order semantics.
 
 | Phase | Scope | Deliverables | Depends on |
 |---|---|---|---|
-| **1** | common + errors + watcher | `TreeMonkeyError` hierarchy, `hashString`, `LruCache`, path-utils, `ProjectWatcher`, `acquireWatcherRole`, `releaseWatcherRole`, `discoverProjects`, `resolveFileProject` | — |
+| **1** | common + errors + watcher | `CodeLedgerError` hierarchy, `hashString`, `LruCache`, path-utils, `ProjectWatcher`, `acquireWatcherRole`, `releaseWatcherRole`, `discoverProjects`, `resolveFileProject` | — |
 | **2** | parser + extractor | `parseSource`, `ParseCache`, all AST utils, `buildLineOffsets`, `getLineColumn`, `extractSymbols` (8 kinds + rich metadata + seeLinks), `extractRelations` (4 sub-extractors), `buildImportMap`, `resolveRelativeImport` | Phase 1 (errors, common) |
 | **3** | store + indexer | Drizzle schema + migrations + FTS triggers, `watcher_owner` table, `DbConnection`, 3 repositories, `FileIndexer`, `SymbolIndexer`, `RelationIndexer`, `IndexCoordinator` (full + incremental + move tracking) | Phase 1, Phase 2 |
 | **4** | search | `symbolSearch`, `relationSearch`, `DependencyGraph` | Phase 3 |
@@ -1510,26 +1510,26 @@ Generic LRU cache using `Map` insertion-order semantics.
 ### zipbul CLI
 
 ```
-treemonkey.parseSource(file, code)
-treemonkey.extractSymbols(parsed)       // seeLinks → card-code link
-treemonkey.extractRelations(parsed)     // imports/calls/extends/implements
-zipbul.AstParser(parsed)               // DI-specific extraction (on top of treemonkey)
+codeLedger.parseSource(file, code)
+codeLedger.extractSymbols(parsed)       // seeLinks → card-code link
+codeLedger.extractRelations(parsed)     // imports/calls/extends/implements
+zipbul.AstParser(parsed)               // DI-specific extraction (on top of codeLedger)
 ```
 
 ### firebat
 
 ```
-treemonkey.parseSource(file, code)
-treemonkey.extractSymbols(parsed)       // members, modifiers for analysis
+codeLedger.parseSource(file, code)
+codeLedger.extractSymbols(parsed)       // members, modifiers for analysis
 firebat.engine(parsed)                  // fingerprint, CFG, duplicates
 ```
 
 ### agent-kit
 
 ```
-treemonkey.symbolSearch(repo, query)    // symbol search
-treemonkey.relationSearch(repo, query)  // relation traversal
-agentKit.linkCard(cardKey, symbolId)    // card-symbol link (extends treemonkey DB)
+codeLedger.symbolSearch(repo, query)    // symbol search
+codeLedger.relationSearch(repo, query)  // relation traversal
+agentKit.linkCard(cardKey, symbolId)    // card-symbol link (extends codeLedger DB)
 ```
 
 ---
@@ -1538,8 +1538,8 @@ agentKit.linkCard(cardKey, symbolId)    // card-symbol link (extends treemonkey 
 
 1. firebat, agent-kit, and zipbul CLI share a single code infrastructure package with zero code duplication for AST parsing, symbol extraction, and code indexing.
 2. Multiple processes on the same project run only 1 OS-level file watcher via DB-based watcher coordination (`watcher_owner` table with PID liveness check + heartbeat).
-3. One code index DB per project (`.zipbul/tree-monkey.db`), shared by all consumers via SQLite WAL mode.
-4. No framework dependency. Configuration via `TreeMonkeyOptions` only.
+3. One code index DB per project (`.zipbul/code-ledger.db`), shared by all consumers via SQLite WAL mode.
+4. No framework dependency. Configuration via `CodeLedgerOptions` only.
 5. No MCP server. No MCP tool definitions. No MCP transport. Pure infrastructure.
 6. AST parser provides rich enough data (8 symbol kinds, parameters, heritage, decorators, members, seeLinks) that consumers never need to re-parse.
 7. Every error is thrown with a module-specific error class and chained `cause`.
@@ -1549,14 +1549,14 @@ agentKit.linkCard(cardKey, symbolId)    // card-symbol link (extends treemonkey 
 
 ## 19. Source Provenance
 
-Classification of every tree-monkey module by origin. Guides implementation priority and expected effort.
+Classification of every code-ledger module by origin. Guides implementation priority and expected effort.
 
 | Strategy | Description | Effort |
 |---|---|---|
 | **A — firebat copy** | Lift from firebat with minimal change | Low |
-| **B — zipbul copy+modify** | Lift from zipbul, adapt to tree-monkey API | Low–Medium |
+| **B — zipbul copy+modify** | Lift from zipbul, adapt to code-ledger API | Low–Medium |
 | **C — synthesis** | Combine pieces from both codebases | Medium |
-| **D — extract+rewrite** | Extract concept, rewrite to tree-monkey design | Medium–High |
+| **D — extract+rewrite** | Extract concept, rewrite to code-ledger design | Medium–High |
 | **E — fresh** | No prior source. Written from scratch | High |
 
 ### Module Provenance Table
