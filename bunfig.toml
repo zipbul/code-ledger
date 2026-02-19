@@ -1,4 +1,5 @@
 [test]
+preload = ["./test/setup.ts"]
 onlyFailures = true
 coverage = true
 coverageReporter = ["text", "lcov"]

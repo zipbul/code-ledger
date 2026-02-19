@@ -5,11 +5,6 @@ import type { ImportReference } from './types';
 const mockVisit = mock((_node: any, _cb: any) => {});
 const mockGetQualifiedName = mock(() => null as any);
 
-mock.module('../parser/ast-utils', () => ({
-  visit: mockVisit,
-  getQualifiedName: mockGetQualifiedName,
-}));
-
 import { extractHeritage } from './heritage-extractor';
 
 const FILE = '/project/src/index.ts';
@@ -34,6 +29,10 @@ function fakeClassNode(
 
 describe('extractHeritage', () => {
   beforeEach(() => {
+    mock.module('../parser/ast-utils', () => ({
+      visit: mockVisit,
+      getQualifiedName: mockGetQualifiedName,
+    }));
     mockVisit.mockClear();
     mockGetQualifiedName.mockClear();
     mockVisit.mockImplementation(() => {});

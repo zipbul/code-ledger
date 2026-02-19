@@ -1,13 +1,15 @@
-import { afterEach, describe, expect, it, mock, spyOn } from "bun:test";
+import { afterEach, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import { discoverProjects, resolveFileProject, type ProjectBoundary } from "./project-discovery";
 
 const mockGlob = mock(async function* (): AsyncGenerator<string> {});
 
-mock.module("node:fs", () => ({
-  promises: {
-    glob: mockGlob,
-  },
-}));
+beforeEach(() => {
+  mock.module("node:fs", () => ({
+    promises: {
+      glob: mockGlob,
+    },
+  }));
+});
 
 afterEach(() => {
   mockGlob.mockReset();

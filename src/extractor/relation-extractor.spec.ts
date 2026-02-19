@@ -7,11 +7,6 @@ const mockExtractImports = mock((): CodeRelation[] => []);
 const mockExtractCalls = mock((): CodeRelation[] => []);
 const mockExtractHeritage = mock((): CodeRelation[] => []);
 
-mock.module('./extractor-utils', () => ({ buildImportMap: mockBuildImportMap }));
-mock.module('./imports-extractor', () => ({ extractImports: mockExtractImports }));
-mock.module('./calls-extractor', () => ({ extractCalls: mockExtractCalls }));
-mock.module('./heritage-extractor', () => ({ extractHeritage: mockExtractHeritage }));
-
 import { extractRelations } from './relation-extractor';
 
 // ── Constants ──────────────────────────────────────────────
@@ -21,6 +16,10 @@ const SENTINEL_MAP = new Map([['__sentinel__', { path: '/__s__', importedName: '
 
 describe('extractRelations', () => {
   beforeEach(() => {
+    mock.module('./extractor-utils', () => ({ buildImportMap: mockBuildImportMap }));
+    mock.module('./imports-extractor', () => ({ extractImports: mockExtractImports }));
+    mock.module('./calls-extractor', () => ({ extractCalls: mockExtractCalls }));
+    mock.module('./heritage-extractor', () => ({ extractHeritage: mockExtractHeritage }));
     mockBuildImportMap.mockClear();
     mockExtractImports.mockClear();
     mockExtractCalls.mockClear();

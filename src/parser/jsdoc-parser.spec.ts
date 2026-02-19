@@ -1,16 +1,19 @@
-import { describe, it, expect, mock } from 'bun:test';
+import { describe, it, expect, mock, beforeEach } from 'bun:test';
 
 // comment-parser의 parse를 mock으로 교체. 변수를 여기서 캡처해야 mockImplementationOnce 사용 가능.
 const mockParse = mock(() => [{ description: 'A description.', tags: [] as any[] }]);
-
-mock.module('comment-parser', () => ({
-  parse: mockParse,
-}));
 
 import { parseJsDoc } from './jsdoc-parser';
 import { ParseError } from '../errors';
 
 describe('parseJsDoc', () => {
+  beforeEach(() => {
+    mock.module('comment-parser', () => ({
+      parse: mockParse,
+    }));
+    mockParse.mockClear();
+    mockParse.mockImplementation(() => [{ description: 'A description.', tags: [] as any[] }]);
+  });
   // HP
   it('should return description and empty tags for a simple comment', () => {
     // Arrange & Act

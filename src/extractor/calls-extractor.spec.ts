@@ -5,10 +5,6 @@ import type { ImportReference } from './types';
 // ── Mock ../parser/ast-utils ──
 const mockGetQualifiedName = mock(() => null as any);
 
-mock.module('../parser/ast-utils', () => ({
-  getQualifiedName: mockGetQualifiedName,
-}));
-
 import { extractCalls } from './calls-extractor';
 
 const FILE = '/project/src/index.ts';
@@ -24,6 +20,9 @@ function makeImportMap(entries: [string, ImportReference][] = []): Map<string, I
 
 describe('extractCalls', () => {
   beforeEach(() => {
+    mock.module('../parser/ast-utils', () => ({
+      getQualifiedName: mockGetQualifiedName,
+    }));
     mockGetQualifiedName.mockClear();
     mockGetQualifiedName.mockReturnValue(null);
   });

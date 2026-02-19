@@ -6,17 +6,8 @@ import type { ParsedFile } from '../parser/types';
 const mockBuildLineOffsets = mock((_sourceText: string) => [0]);
 const mockGetLineColumn = mock((_offsets: number[], _offset: number) => ({ line: 1, column: 0 }));
 
-mock.module('../parser/source-position', () => ({
-  buildLineOffsets: mockBuildLineOffsets,
-  getLineColumn: mockGetLineColumn,
-}));
-
 // ── Mock ../parser/jsdoc-parser ──
 const mockParseJsDoc = mock((_commentText: string) => ({ description: '', tags: [] }));
-
-mock.module('../parser/jsdoc-parser', () => ({
-  parseJsDoc: mockParseJsDoc,
-}));
 
 import { extractSymbols } from './symbol-extractor';
 
@@ -27,6 +18,13 @@ function makeFixture(source: string, filePath = '/project/src/index.ts'): Parsed
 
 describe('extractSymbols', () => {
   beforeEach(() => {
+    mock.module('../parser/source-position', () => ({
+      buildLineOffsets: mockBuildLineOffsets,
+      getLineColumn: mockGetLineColumn,
+    }));
+    mock.module('../parser/jsdoc-parser', () => ({
+      parseJsDoc: mockParseJsDoc,
+    }));
     mockBuildLineOffsets.mockClear();
     mockGetLineColumn.mockClear();
     mockParseJsDoc.mockClear();

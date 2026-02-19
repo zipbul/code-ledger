@@ -5,12 +5,6 @@ const mockResolve = mock((..._args: string[]) => '');
 const mockDirname = mock((_p: string) => '');
 const mockExtname = mock((_p: string) => '');
 
-mock.module('node:path', () => ({
-  resolve: mockResolve,
-  dirname: mockDirname,
-  extname: mockExtname,
-}));
-
 import { resolveImport, buildImportMap } from './extractor-utils';
 
 const FAKE_PROJECT = '/project';
@@ -41,6 +35,11 @@ function fakeNamespaceSpec(localName: string): any {
 // ============================================================
 describe('resolveImport', () => {
   beforeEach(() => {
+    mock.module('node:path', () => ({
+      resolve: mockResolve,
+      dirname: mockDirname,
+      extname: mockExtname,
+    }));
     mockResolve.mockClear();
     mockDirname.mockClear();
     mockExtname.mockClear();

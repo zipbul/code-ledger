@@ -7,11 +7,6 @@ const mockResolveImport = mock(() => null as string | null);
 const mockVisit = mock((_node: any, _cb: any) => {});
 const mockGetStringLiteralValue = mock(() => null as string | null);
 
-mock.module('../parser/ast-utils', () => ({
-  visit: mockVisit,
-  getStringLiteralValue: mockGetStringLiteralValue,
-}));
-
 import { extractImports } from './imports-extractor';
 
 const FILE = '/project/src/index.ts';
@@ -23,6 +18,10 @@ function fakeAst(body: any[]): any {
 
 describe('extractImports', () => {
   beforeEach(() => {
+    mock.module('../parser/ast-utils', () => ({
+      visit: mockVisit,
+      getStringLiteralValue: mockGetStringLiteralValue,
+    }));
     mockResolveImport.mockClear();
     mockVisit.mockClear();
     mockGetStringLiteralValue.mockClear();
