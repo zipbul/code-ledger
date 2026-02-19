@@ -282,7 +282,7 @@ describe("ProjectWatcher", () => {
     expect(events).toEqual([{ eventType: "change", filePath: "tsconfig.json" }]);
   });
 
-  it("should pass jsconfig json as config file when callback receives jsconfig path", async () => {
+  it("should ignore jsconfig json since JSX/JS config is not supported", async () => {
     const events: Array<{ eventType: string; filePath: string }> = [];
 
     let callback: SubscribeCallback | undefined;
@@ -296,7 +296,7 @@ describe("ProjectWatcher", () => {
 
     callback?.(undefined, [{ type: "update", path: "/repo/jsconfig.json" }]);
 
-    expect(events).toEqual([{ eventType: "change", filePath: "jsconfig.json" }]);
+    expect(events).toEqual([]);
   });
 
   it("should include additional ignore patterns when ignorePatterns option is provided", async () => {

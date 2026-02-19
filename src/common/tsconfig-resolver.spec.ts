@@ -52,18 +52,14 @@ describe("loadTsconfigPaths", () => {
     expect(result).toBeNull();
   });
 
-  it("should fallback to jsconfig when tsconfig does not exist", async () => {
-    spyOn(Bun, "file").mockImplementation((p) => {
-      if (String(p) === JSCONFIG_PATH) {
-        return makeBunFile({ compilerOptions: { baseUrl: ".", paths: { "#/*": ["lib/*"] } } });
-      }
+  it("should return null when tsconfig does not exist", async () => {
+    spyOn(Bun, "file").mockImplementation((_p) => {
       return makeBunFile(null);
     });
 
     const result = await loadTsconfigPaths(PROJECT_ROOT);
 
-    expect(result?.baseUrl).toBe(PROJECT_ROOT);
-    expect(result?.paths.get("#/*")).toEqual(["lib/*"]);
+    expect(result).toBeNull();
   });
 
   it("should return cached value when file changes without invalidation", async () => {

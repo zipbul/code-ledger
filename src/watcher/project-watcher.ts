@@ -22,7 +22,7 @@ const WATCHER_IGNORE_GLOBS: readonly string[] = [
   "**/node_modules/**",
 ];
 
-const CONFIG_FILE_NAMES = new Set(["package.json", "tsconfig.json", "jsconfig.json"]);
+const CONFIG_FILE_NAMES = new Set(["package.json", "tsconfig.json"]);
 
 function normalizePath(value: string): string {
   return value.replaceAll("\\", "/");

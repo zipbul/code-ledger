@@ -8,15 +8,17 @@
   "dependencies": {
     "@parcel/watcher": "^2.5.6",
     "comment-parser": "1.4.5",
+    "drizzle-orm": "^0.45.1",
     "oxc-parser": "0.114.0"
   },
   "devDependencies": {
-    "@commitlint/cli": "^20.4.1",
-    "@commitlint/config-conventional": "^20.4.1",
+    "@commitlint/cli": "^20.4.2",
+    "@commitlint/config-conventional": "^20.4.2",
     "@types/bun": "latest",
+    "drizzle-kit": "^0.31.9",
     "husky": "^9.1.7"
   },
   "peerDependencies": {
-    "typescript": "^5"
+    "typescript": "^5.9.3"
   }
 }

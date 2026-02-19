@@ -23,9 +23,8 @@ export async function loadTsconfigPaths(projectRoot: string): Promise<TsconfigPa
   }
 
   const tsconfigPath = path.join(projectRoot, "tsconfig.json");
-  const jsconfigPath = path.join(projectRoot, "jsconfig.json");
 
-  const config = (await readConfig(tsconfigPath)) ?? (await readConfig(jsconfigPath));
+  const config = await readConfig(tsconfigPath);
   if (!config) {
     cache.set(projectRoot, null);
     return null;
