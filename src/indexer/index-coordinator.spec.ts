@@ -4,7 +4,7 @@ import type { FileChangeEvent } from '../watcher/types';
 // ── Mock module-level imports ── (must be before IndexCoordinator import)
 const mockDetectChanges = mock(async (_opts: any) => ({ changed: [], unchanged: [], deleted: [] }));
 const mockIndexFileSymbols = mock((_opts: any) => {});
-const mockIndexFileRelations = mock((_opts: any) => {});
+const mockIndexFileRelations = mock((_opts: any) => 0);
 const mockParseSource = mock((_filePath: string, _text: string) => ({
   filePath: _filePath,
   program: {},
@@ -13,6 +13,7 @@ const mockParseSource = mock((_filePath: string, _text: string) => ({
   sourceText: _text,
 }));
 const mockLoadTsconfigPaths = mock((_root: string) => null);
+const mockClearTsconfigPathsCache = mock((_root?: string) => {});
 const mockResolveFileProject = mock((_rel: string, _bounds: any[], _root?: string) => 'test-project');
 const mockDiscoverProjects = mock(async (_root: string) => [{ dir: '.', project: 'test-project' }]);
 
@@ -92,19 +93,21 @@ beforeEach(() => {
   mock.module('./file-indexer', () => ({ detectChanges: mockDetectChanges }));
   mock.module('./symbol-indexer', () => ({ indexFileSymbols: mockIndexFileSymbols }));
   mock.module('./relation-indexer', () => ({ indexFileRelations: mockIndexFileRelations }));
-  mock.module('../common/tsconfig-resolver', () => ({ loadTsconfigPaths: mockLoadTsconfigPaths }));
+  mock.module('../common/tsconfig-resolver', () => ({ loadTsconfigPaths: mockLoadTsconfigPaths, clearTsconfigPathsCache: mockClearTsconfigPathsCache }));
   mock.module('../common/project-discovery', () => ({ resolveFileProject: mockResolveFileProject, discoverProjects: mockDiscoverProjects }));
 
   mockDetectChanges.mockReset();
   mockDetectChanges.mockResolvedValue({ changed: [], unchanged: [], deleted: [] });
   mockIndexFileSymbols.mockReset();
   mockIndexFileRelations.mockReset();
+  mockIndexFileRelations.mockReturnValue(0);
   mockParseSource.mockReset();
   mockParseSource.mockImplementation((_fp: string, text: string) => ({
     filePath: _fp, program: { body: [] }, errors: [], comments: [], sourceText: text,
   }));
   mockLoadTsconfigPaths.mockReset();
   mockLoadTsconfigPaths.mockReturnValue(null);
+  mockClearTsconfigPathsCache.mockReset();
   mockResolveFileProject.mockReset();
   mockResolveFileProject.mockReturnValue('test-project');
   mockDiscoverProjects.mockReset();
@@ -555,5 +558,358 @@ describe('IndexCoordinator', () => {
     const callsAfterSecond = mockIndexFileSymbols.mock.calls.length;
 
     expect(callsAfterSecond - callsAfterFirst).toBe(callsAfterFirst);
+  });
+
+  // ── I-1: clearTsconfigPathsCache ─────────────────────────────────────────
+
+  // [HP] clearTsconfigPathsCache가 loadTsconfigPaths 전에 호출되어야 한다
+  it('should call clearTsconfigPathsCache before reloading tsconfigPaths when tsconfig.json changes', () => {
+    const coordinator = makeCoordinator();
+
+    coordinator.handleWatcherEvent({ eventType: 'change', filePath: 'tsconfig.json' });
+
+    expect(mockClearTsconfigPathsCache).toHaveBeenCalledTimes(1);
+  });
+
+  // [HP] clearTsconfigPathsCache가 loadTsconfigPaths보다 순서상 먼저 호출되어야 한다
+  it('should call clearTsconfigPathsCache before loadTsconfigPaths when tsconfig.json changes', () => {
+    const callOrder: string[] = [];
+    mockClearTsconfigPathsCache.mockImplementation(() => { callOrder.push('clear'); });
+    mockLoadTsconfigPaths.mockImplementation(() => { callOrder.push('load'); return null; });
+    const coordinator = makeCoordinator();
+    callOrder.length = 0; // constructor의 loadTsconfigPaths 호출 제거
+
+    coordinator.handleWatcherEvent({ eventType: 'change', filePath: 'tsconfig.json' });
+
+    expect(callOrder).toEqual(['clear', 'load']);
+  });
+
+  // [OR] tsconfig.json 이벤트에서 clear → load → fullIndex 순서 보장
+  it('should trigger fullIndex after clearTsconfigPathsCache and loadTsconfigPaths on tsconfig.json change', async () => {
+    const coordinator = makeCoordinator();
+    const onIndexed = mock((_r: any) => {});
+    coordinator.onIndexed(onIndexed);
+
+    coordinator.handleWatcherEvent({ eventType: 'change', filePath: 'tsconfig.json' });
+    await coordinator.shutdown();
+
+    expect(mockClearTsconfigPathsCache).toHaveBeenCalled();
+    expect(mockLoadTsconfigPaths).toHaveBeenCalledTimes(2); // init + reload
+    expect(onIndexed).toHaveBeenCalled();
+  });
+
+  // ── I-2: fullIndex monorepo 경계 ─────────────────────────────────────────
+
+  // [HP] monorepo 2개 project 모두의 파일을 fullIndex 트랜잭션에서 삭제해야 한다
+  it('should delete all files across all project boundaries during fullIndex', async () => {
+    const fileRepo = makeFileRepo();
+    fileRepo.getAllFiles
+      .mockImplementationOnce(() => [{ project: 'pkg-a', filePath: 'packages/a/src/a.ts' }])
+      .mockImplementationOnce(() => [{ project: 'pkg-b', filePath: 'packages/b/src/b.ts' }]);
+    const dbConnection = makeDbConnection();
+    const coordinator = new IndexCoordinator({
+      projectRoot: PROJECT_ROOT,
+      boundaries: [
+        { dir: 'packages/a', project: 'pkg-a' },
+        { dir: 'packages/b', project: 'pkg-b' },
+      ],
+      extensions: EXTENSIONS,
+      ignorePatterns: IGNORE_PATTERNS,
+      dbConnection,
+      parseCache: makeParseCache(),
+      fileRepo,
+      symbolRepo: makeSymbolRepo(),
+      relationRepo: makeRelationRepo(),
+      parseSourceFn: mockParseSource as any,
+    });
+
+    await coordinator.fullIndex();
+
+    expect(fileRepo.deleteFile).toHaveBeenCalledWith('pkg-a', 'packages/a/src/a.ts');
+    expect(fileRepo.deleteFile).toHaveBeenCalledWith('pkg-b', 'packages/b/src/b.ts');
+  });
+
+  // [ED] boundary 1개 → 단일 project 파일 삭제 (기존 동작 유지)
+  it('should delete files for the single project boundary during fullIndex', async () => {
+    const fileRepo = makeFileRepo();
+    fileRepo.getAllFiles.mockReturnValue([{ project: 'test-project', filePath: 'src/a.ts' }]);
+    const coordinator = makeCoordinator({ fileRepo });
+
+    await coordinator.fullIndex();
+
+    expect(fileRepo.deleteFile).toHaveBeenCalledWith('test-project', 'src/a.ts');
+  });
+
+  // ── I-3: totalSymbols/totalRelations 실제 값 ─────────────────────────────
+
+  // [HP] 파일 인덱싱 후 totalSymbols는 실제 심볼 수여야 한다
+  it('should return actual totalSymbols count in IndexResult after indexing', async () => {
+    const symbolRepo = makeSymbolRepo();
+    symbolRepo.getFileSymbols.mockReturnValue([
+      { name: 'fn1', kind: 'function', filePath: 'src/a.ts' },
+      { name: 'fn2', kind: 'function', filePath: 'src/a.ts' },
+      { name: 'fn3', kind: 'function', filePath: 'src/a.ts' },
+    ]);
+    mockDetectChanges.mockResolvedValue({
+      changed: [makeFakeFile('src/a.ts')],
+      unchanged: [],
+      deleted: [],
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 100 } as any);
+    const coordinator = makeCoordinator({ symbolRepo });
+
+    const result = await coordinator.fullIndex();
+
+    expect(result.totalSymbols).toBe(3);
+  });
+
+  // [NE] changed=[] 일 때 totalSymbols=0이어야 한다
+  it('should return totalSymbols=0 when no files are indexed', async () => {
+    mockDetectChanges.mockResolvedValue({ changed: [], unchanged: [], deleted: [] });
+    const coordinator = makeCoordinator();
+
+    const result = await coordinator.fullIndex();
+
+    expect(result.totalSymbols).toBe(0);
+  });
+
+  // ── I-4: IndexResult changedFiles / deletedFiles ──────────────────────────
+
+  // [HP] IndexResult는 changedFiles 배열을 포함해야 한다
+  it('should include changedFiles array with indexed file paths in IndexResult', async () => {
+    mockDetectChanges.mockResolvedValue({
+      changed: [makeFakeFile('src/a.ts'), makeFakeFile('src/b.ts')],
+      unchanged: [],
+      deleted: [],
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => '', lastModified: 1000, size: 100 } as any);
+    const coordinator = makeCoordinator();
+
+    const result = await coordinator.incrementalIndex();
+
+    expect(result.changedFiles).toEqual(['src/a.ts', 'src/b.ts']);
+  });
+
+  // [HP] IndexResult는 deletedFiles 배열을 포함해야 한다
+  it('should include deletedFiles array with deleted file paths in IndexResult', async () => {
+    const symbolRepo = makeSymbolRepo();
+    symbolRepo.getFileSymbols.mockReturnValue([]);
+    mockDetectChanges.mockResolvedValue({
+      changed: [],
+      unchanged: [],
+      deleted: ['src/gone.ts'],
+    });
+    const coordinator = makeCoordinator({ symbolRepo });
+
+    const result = await coordinator.incrementalIndex();
+
+    expect(result.deletedFiles).toEqual(['src/gone.ts']);
+  });
+
+  // [ED] changed/deleted 모두 비어있을 때 changedFiles=[], deletedFiles=[]
+  it('should return empty changedFiles and deletedFiles arrays when nothing changed', async () => {
+    mockDetectChanges.mockResolvedValue({ changed: [], unchanged: [], deleted: [] });
+    const coordinator = makeCoordinator();
+
+    const result = await coordinator.incrementalIndex();
+
+    expect(result.changedFiles).toEqual([]);
+    expect(result.deletedFiles).toEqual([]);
+  });
+
+  // ── CRIT-3: detectChanges existingMap 집계 ────────────────────────────────
+
+  // [HP] boundaries 2개 → getFilesMap이 각 프로젝트로 호출됨
+  it('should call getFilesMap with each boundary project to build the existingMap for detectChanges', async () => {
+    const fileRepo = makeFileRepo();
+    const coordinator = new IndexCoordinator({
+      projectRoot: PROJECT_ROOT,
+      boundaries: [
+        { dir: 'packages/a', project: 'pkg-a' },
+        { dir: 'packages/b', project: 'pkg-b' },
+      ],
+      extensions: EXTENSIONS,
+      ignorePatterns: IGNORE_PATTERNS,
+      dbConnection: makeDbConnection(),
+      parseCache: makeParseCache(),
+      fileRepo,
+      symbolRepo: makeSymbolRepo(),
+      relationRepo: makeRelationRepo(),
+      parseSourceFn: mockParseSource as any,
+    });
+
+    await coordinator.fullIndex();
+
+    const calls = (fileRepo.getFilesMap.mock.calls as any[]).map((c: any[]) => c[0]);
+    expect(calls).toContain('pkg-a');
+    expect(calls).toContain('pkg-b');
+  });
+
+  // ── CRIT-2: fullIndex 원자적 트랜잭션 ────────────────────────────────────
+
+  // [HP] fullIndex: transaction이 delete와 file insert를 모두 포함함
+  it('should include both delete and file-insert operations inside the transaction during fullIndex', async () => {
+    const callLog: string[] = [];
+    const dbConnection = makeDbConnection();
+    dbConnection.transaction = mock((fn: () => any) => {
+      callLog.push('tx:start');
+      const result = fn();
+      callLog.push('tx:end');
+      return result;
+    }) as any;
+    const fileRepo = makeFileRepo();
+    fileRepo.deleteFile = mock((..._args: any[]) => { callLog.push('deleteFile'); }) as any;
+    fileRepo.getAllFiles = mock(() => [{ project: 'test-project', filePath: 'src/a.ts' }]) as any;
+    fileRepo.upsertFile = mock((..._args: any[]) => { callLog.push('upsertFile'); }) as any;
+    mockDetectChanges.mockResolvedValue({ changed: [makeFakeFile('src/a.ts')], unchanged: [], deleted: [] });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'src', lastModified: 1000, size: 100 } as any);
+
+    const coordinator = makeCoordinator({ dbConnection, fileRepo });
+    await coordinator.fullIndex();
+
+    const txStart = callLog.indexOf('tx:start');
+    const txEnd = callLog.indexOf('tx:end');
+    const deleteIdx = callLog.indexOf('deleteFile');
+    const upsertIdx = callLog.indexOf('upsertFile');
+    expect(txStart).toBeGreaterThanOrEqual(0);
+    expect(deleteIdx).toBeGreaterThan(txStart);
+    expect(deleteIdx).toBeLessThan(txEnd);
+    expect(upsertIdx).toBeGreaterThan(txStart);
+    expect(upsertIdx).toBeLessThan(txEnd);
+  });
+
+  // ── HIGH-4: lock bypass 방지 ──────────────────────────────────────────────
+
+  // [HP] lock 활성 시 fullIndex 직접 호출 → currentIndexing 반환 (새 실행 없음)
+  it('should return the currently running promise when fullIndex is called while already indexing', async () => {
+    let resolveFirst!: () => void;
+    const first = new Promise<any>((res) => { resolveFirst = () => res({ changed: [], unchanged: [], deleted: [] }); });
+    mockDetectChanges.mockReturnValueOnce(first);
+
+    const coordinator = makeCoordinator();
+    const p1 = coordinator.fullIndex();
+    const p2 = coordinator.fullIndex(); // lock active → same promise
+
+    expect(p2).toBe(p1);
+
+    resolveFirst();
+    await p1;
+  });
+
+  // [ST] _pendingFullIndex=true → 현재 fullIndex 완료 후 두 번째 fullIndex 자동 실행
+  it('should run a second fullIndex after the first completes when fullIndex was called while lock was active', async () => {
+    let resolveFirst!: () => void;
+    const first = new Promise<any>((res) => { resolveFirst = () => res({ changed: [], unchanged: [], deleted: [] }); });
+    mockDetectChanges
+      .mockReturnValueOnce(first)
+      .mockResolvedValue({ changed: [], unchanged: [], deleted: [] });
+
+    const coordinator = makeCoordinator();
+
+    const p1 = coordinator.fullIndex();
+    coordinator.fullIndex(); // lock active → _pendingFullIndex queued
+
+    // Only first detectChanges should be in-flight (post-fix: second is queued, not concurrent)
+    await Promise.resolve();
+    expect(mockDetectChanges).toHaveBeenCalledTimes(1);
+
+    resolveFirst();
+    await p1;
+    await coordinator.shutdown(); // waits for second fullIndex
+
+    // After first completes, second ran from pending queue
+    expect(mockDetectChanges).toHaveBeenCalledTimes(2);
+  });
+
+  // ── HIGH-5: totalRelations 집계 ───────────────────────────────────────────
+
+  // [HP] indexFileRelations가 3 반환 → IndexResult.totalRelations=3
+  it('should return totalRelations equal to the sum returned by indexFileRelations', async () => {
+    mockIndexFileRelations.mockReturnValue(3);
+    mockDetectChanges.mockResolvedValue({ changed: [makeFakeFile('src/a.ts')], unchanged: [], deleted: [] });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 100 } as any);
+    const coordinator = makeCoordinator();
+
+    const result = await coordinator.incrementalIndex();
+
+    expect(result.totalRelations).toBe(3);
+  });
+
+  // [NE] lock 활성 + incrementalIndex 호출 → pendingFullIndex 설정 안됨
+  it('should not schedule a subsequent fullIndex when incrementalIndex is called while lock is active', async () => {
+    let resolveFirst!: () => void;
+    const first = new Promise<any>((res) => { resolveFirst = () => res({ changed: [], unchanged: [], deleted: [] }); });
+    mockDetectChanges
+      .mockReturnValueOnce(first)
+      .mockResolvedValue({ changed: [], unchanged: [], deleted: [] });
+
+    const coordinator = makeCoordinator();
+    const p1 = coordinator.fullIndex(); // starts
+    coordinator.incrementalIndex(); // lock active → no pendingFullIndex
+
+    resolveFirst();
+    await p1;
+
+    // Only the first fullIndex ran detectChanges — no second run triggered
+    expect(mockDetectChanges).toHaveBeenCalledTimes(1);
+  });
+
+  // ── C-3: processChanged 에러 격리 ──────────────────────────────────────────
+
+  // [HP] 모든 파일 성공 → failedFiles=[]
+  it('should return empty failedFiles when all processFile calls succeed', async () => {
+    mockDetectChanges.mockResolvedValue({
+      changed: [makeFakeFile('src/a.ts'), makeFakeFile('src/b.ts')],
+      unchanged: [],
+      deleted: [],
+    });
+    spyOn(Bun, 'file').mockReturnValue({ text: async () => 'code', lastModified: 1000, size: 100 } as any);
+    const coordinator = makeCoordinator();
+
+    const result = await coordinator.incrementalIndex();
+
+    expect((result as any).failedFiles).toEqual([]);
+  });
+
+  // [NE] 한 파일 throw → failedFiles에 추가, 나머지 계속 처리
+  it('should add file to failedFiles and continue processing others when processFile throws', async () => {
+    mockDetectChanges.mockResolvedValue({
+      changed: [makeFakeFile('src/fail.ts'), makeFakeFile('src/ok.ts')],
+      unchanged: [],
+      deleted: [],
+    });
+    let callCount = 0;
+    spyOn(Bun, 'file').mockReturnValue({
+      text: mock(async () => {
+        if (callCount++ === 0) throw new Error('read failed');
+        return 'code';
+      }),
+      lastModified: 1000,
+      size: 100,
+    } as any);
+    const coordinator = makeCoordinator();
+
+    const result = await coordinator.incrementalIndex();
+
+    expect((result as any).failedFiles).toEqual(['src/fail.ts']);
+  });
+
+  // [NE] 모든 파일 throw → 모두 failedFiles에 포함
+  it('should include all files in failedFiles when every processFile call throws', async () => {
+    mockDetectChanges.mockResolvedValue({
+      changed: [makeFakeFile('src/a.ts'), makeFakeFile('src/b.ts')],
+      unchanged: [],
+      deleted: [],
+    });
+    spyOn(Bun, 'file').mockReturnValue({
+      text: mock(async () => { throw new Error('read failed'); }),
+      lastModified: 1000,
+      size: 100,
+    } as any);
+    const coordinator = makeCoordinator();
+
+    const result = await coordinator.incrementalIndex();
+
+    expect((result as any).failedFiles).toEqual(['src/a.ts', 'src/b.ts']);
   });
 });

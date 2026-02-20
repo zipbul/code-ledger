@@ -17,12 +17,21 @@ export function resolveImport(
   currentFilePath: string,
   importPath: string,
   tsconfigPaths?: TsconfigPaths,
-): string | null {
+): string[] {
   // 1. Relative imports
   if (importPath.startsWith('.')) {
-    let resolved = resolve(dirname(currentFilePath), importPath);
-    if (extname(resolved) === '') resolved += '.ts';
-    return resolved;
+    const resolved = resolve(dirname(currentFilePath), importPath);
+    if (extname(resolved) === '') {
+      return [
+        resolved + '.ts',
+        resolved + '/index.ts',
+        resolved + '.mts',
+        resolved + '/index.mts',
+        resolved + '.cts',
+        resolved + '/index.cts',
+      ];
+    }
+    return [resolved];
   }
 
   // 2. tsconfig path aliases
@@ -35,9 +44,18 @@ export function resolveImport(
       if (starIdx === -1) {
         // Exact match
         if (importPath === pattern) {
-          let resolved = resolve(tsconfigPaths.baseUrl, targets[0]);
-          if (extname(resolved) === '') resolved += '.ts';
-          return resolved;
+          const resolved = resolve(tsconfigPaths.baseUrl, targets[0]);
+          if (extname(resolved) === '') {
+            return [
+              resolved + '.ts',
+              resolved + '/index.ts',
+              resolved + '.mts',
+              resolved + '/index.mts',
+              resolved + '.cts',
+              resolved + '/index.cts',
+            ];
+          }
+          return [resolved];
         }
       } else {
         const prefix = pattern.slice(0, starIdx);
@@ -51,16 +69,25 @@ export function resolveImport(
             suffix === '' ? undefined : importPath.length - suffix.length,
           );
           const target = targets[0].replace('*', captured);
-          let resolved = resolve(tsconfigPaths.baseUrl, target);
-          if (extname(resolved) === '') resolved += '.ts';
-          return resolved;
+          const resolved = resolve(tsconfigPaths.baseUrl, target);
+          if (extname(resolved) === '') {
+            return [
+              resolved + '.ts',
+              resolved + '/index.ts',
+              resolved + '.mts',
+              resolved + '/index.mts',
+              resolved + '.cts',
+              resolved + '/index.cts',
+            ];
+          }
+          return [resolved];
         }
       }
     }
   }
 
   // 3. External package
-  return null;
+  return [];
 }
 
 /**
@@ -80,7 +107,7 @@ export function buildImportMap(
     currentFilePath: string,
     importPath: string,
     tsconfigPaths?: TsconfigPaths,
-  ) => string | null = resolveImport,
+  ) => string[] = resolveImport,
 ): Map<string, ImportReference> {
   const map = new Map<string, ImportReference>();
 
@@ -88,8 +115,9 @@ export function buildImportMap(
     if (node.type !== 'ImportDeclaration') continue;
 
     const sourcePath: string = node.source?.value ?? '';
-    const resolved = resolveImportFn(currentFilePath, sourcePath, tsconfigPaths);
-    if (resolved === null) continue;
+    const candidates = resolveImportFn(currentFilePath, sourcePath, tsconfigPaths);
+    if (candidates.length === 0) continue;
+    const resolved = candidates[0];
 
     for (const spec of node.specifiers ?? []) {
       switch (spec.type) {

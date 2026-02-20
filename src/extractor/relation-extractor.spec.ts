@@ -7,6 +7,11 @@ const mockExtractImports = mock((): CodeRelation[] => []);
 const mockExtractCalls = mock((): CodeRelation[] => []);
 const mockExtractHeritage = mock((): CodeRelation[] => []);
 
+mock.module('./extractor-utils', () => ({ buildImportMap: mockBuildImportMap }));
+mock.module('./imports-extractor', () => ({ extractImports: mockExtractImports }));
+mock.module('./calls-extractor', () => ({ extractCalls: mockExtractCalls }));
+mock.module('./heritage-extractor', () => ({ extractHeritage: mockExtractHeritage }));
+
 import { extractRelations } from './relation-extractor';
 
 // ── Constants ──────────────────────────────────────────────

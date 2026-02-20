@@ -1,7 +1,7 @@
 import { describe, it, expect, mock, beforeEach } from 'bun:test';
 
 // ── Mock resolveImport (injected via DI, no mock.module needed) ──
-const mockResolveImport = mock(() => null as string | null);
+const mockResolveImport = mock(() => [] as string[]);
 
 // ── Mock ../parser/ast-utils ──
 const mockVisit = mock((_node: any, _cb: any) => {});
@@ -25,7 +25,7 @@ describe('extractImports', () => {
     mockResolveImport.mockClear();
     mockVisit.mockClear();
     mockGetStringLiteralValue.mockClear();
-    mockResolveImport.mockReturnValue('/resolved/path.ts');
+    mockResolveImport.mockReturnValue(['/resolved/path.ts']);
     mockVisit.mockImplementation(() => {});
     mockGetStringLiteralValue.mockReturnValue(null);
   });
@@ -70,7 +70,7 @@ describe('extractImports', () => {
 
   // NE — external package
   it('should not produce a relation when import source is an npm package', () => {
-    mockResolveImport.mockReturnValue(null);
+    mockResolveImport.mockReturnValue([]);
 
     const ast = fakeAst([
       { type: 'ImportDeclaration', source: { value: 'react' }, importKind: 'value', specifiers: [] },
@@ -156,7 +156,7 @@ describe('extractImports', () => {
   });
 
   it('should return no relation when export { foo } from source is an external npm package', () => {
-    mockResolveImport.mockReturnValue(null);
+    mockResolveImport.mockReturnValue([]);
 
     const ast = fakeAst([
       { type: 'ExportNamedDeclaration', source: { value: 'react' } },

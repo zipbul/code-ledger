@@ -1,7 +1,7 @@
 import type { FileChangeEvent } from '../watcher/types';
 import type { ProjectBoundary } from '../common/project-discovery';
 import { resolveFileProject, discoverProjects } from '../common/project-discovery';
-import { loadTsconfigPaths } from '../common/tsconfig-resolver';
+import { loadTsconfigPaths, clearTsconfigPathsCache } from '../common/tsconfig-resolver';
 import { toAbsolutePath } from '../common/path-utils';
 import { hashString } from '../common/hasher';
 import { parseSource } from '../parser/parse-source';
@@ -21,6 +21,9 @@ export interface IndexResult {
   totalSymbols: number;
   totalRelations: number;
   durationMs: number;
+  changedFiles: string[];
+  deletedFiles: string[];
+  failedFiles: string[];
 }
 
 // ── Options ────────────────────────────────────────────────────────────────
@@ -30,7 +33,7 @@ export interface IndexCoordinatorOptions {
   boundaries: ProjectBoundary[];
   extensions: string[];
   ignorePatterns: string[];
-  dbConnection: { transaction<T>(fn: () => T): T };
+  dbConnection: { transaction<T>(fn: (tx?: any) => T): T };
   parseCache: {
     set(key: string, value: unknown): void;
     get(key: string): unknown;
@@ -79,6 +82,9 @@ export class IndexCoordinator {
   /** The currently running indexing promise (for shutdown). */
   private currentIndexing: Promise<IndexResult> | null = null;
 
+  /** Set to true when fullIndex() is called while the lock is active (queued). */
+  private _pendingFullIndex = false;
+
   /** Resolved tsconfig path mappings (may be a Promise during async load). */
   private tsconfigPathsRaw: unknown;
 
@@ -92,6 +98,11 @@ export class IndexCoordinator {
   }
 
   // ── Public API ───────────────────────────────────────────────────────────
+
+  /** Exposes current tsconfig paths (used by CodeLedger.extractRelations). */
+  get tsconfigPaths(): unknown {
+    return this.tsconfigPathsRaw;
+  }
 
   /** Full re-index: runs detectChanges then processes all changed files. */
   fullIndex(): Promise<IndexResult> {
@@ -117,6 +128,7 @@ export class IndexCoordinator {
   handleWatcherEvent(event: FileChangeEvent): void {
     // tsconfig.json change → reload paths and trigger full re-index.
     if (event.filePath.endsWith('tsconfig.json')) {
+      clearTsconfigPathsCache(this.opts.projectRoot);
       this.tsconfigPathsRaw = loadTsconfigPaths(this.opts.projectRoot);
       this.fullIndex();
       return;
@@ -156,6 +168,12 @@ export class IndexCoordinator {
 
   /** Starts an indexing run and maintains the lock / pending queue. */
   private _startIndex(events: FileChangeEvent[] | undefined, useTransaction: boolean): Promise<IndexResult> {
+    if (this.indexingLock) {
+      if (useTransaction) {
+        this._pendingFullIndex = true;
+      }
+      return this.currentIndexing!;
+    }
     this.indexingLock = true;
 
     const work = this._doIndex(events, useTransaction)
@@ -166,8 +184,11 @@ export class IndexCoordinator {
       .finally(() => {
         this.indexingLock = false;
         this.currentIndexing = null;
-        // Drain any events that arrived while this run was in progress.
-        if (this.pendingEvents.length > 0) {
+        // Drain: pending fullIndex takes priority over incremental events.
+        if (this._pendingFullIndex) {
+          this._pendingFullIndex = false;
+          this._startIndex(undefined, true);
+        } else if (this.pendingEvents.length > 0) {
           const drained = this.pendingEvents.splice(0);
           this._startIndex(drained, false);
         }
@@ -205,13 +226,18 @@ export class IndexCoordinator {
         }));
       deleted = events.filter((e) => e.eventType === 'delete').map((e) => e.filePath);
     } else {
-      // No explicit events — call detectChanges immediately (no preceding await)
-      // so tests can synchronously verify it was invoked.
+      // No explicit events — aggregate existingMap from all boundaries then call detectChanges.
+      const existingMap = new Map<string, any>();
+      for (const boundary of this.opts.boundaries) {
+        for (const [key, val] of fileRepo.getFilesMap(boundary.project)) {
+          existingMap.set(key, val);
+        }
+      }
       const result = await detectChanges({
         projectRoot: this.opts.projectRoot,
         extensions: this.opts.extensions,
         ignorePatterns: this.opts.ignorePatterns,
-        fileRepo,
+        fileRepo: { getFilesMap: () => existingMap },
       });
       changed = result.changed;
       deleted = result.deleted;
@@ -239,25 +265,81 @@ export class IndexCoordinator {
     };
 
     // ── Index changed / new files ─────────────────────────────────────────
-    const processChanged = async () => {
+    const processChanged = async (): Promise<{ symbols: number; relations: number; failedFiles: string[] }> => {
+      let symbols = 0;
+      let relations = 0;
+      const failedFiles: string[] = [];
       for (const file of changed) {
-        await this._processFile(file.filePath, file.contentHash || undefined, tsconfigPaths);
+        try {
+          const r = await this._processFile(file.filePath, file.contentHash || undefined, tsconfigPaths);
+          symbols += r.symbolCount;
+          relations += r.relCount;
+        } catch (err) {
+          console.error(`[IndexCoordinator] Failed to index ${file.filePath}:`, err);
+          failedFiles.push(file.filePath);
+        }
       }
+      return { symbols, relations, failedFiles };
     };
 
+    let totalSymbols = 0;
+    let totalRelations = 0;
+    let allFailedFiles: string[] = [];
+
     if (useTransaction) {
+      // CRIT-2: Pre-read files async BEFORE the transaction (bun:sqlite tx must be sync).
+      const { projectRoot, boundaries } = this.opts;
+      const { parseCache } = this.opts;
+      const preread = await Promise.all(
+        changed.map(async (file) => {
+          const absPath = toAbsolutePath(projectRoot, file.filePath);
+          const bunFile = Bun.file(absPath);
+          const text = await bunFile.text();
+          const contentHash = file.contentHash || hashString(text);
+          return { filePath: file.filePath, text, contentHash, mtimeMs: bunFile.lastModified, size: bunFile.size };
+        }),
+      );
+
+      // Atomic: delete all existing + re-index all changed in ONE transaction.
       dbConnection.transaction(() => {
-        // Full re-index: clear ALL file records first (cascades to symbols/relations).
-        const allFiles = fileRepo.getAllFiles(resolveFileProject(this.opts.projectRoot, this.opts.boundaries));
-        for (const f of allFiles) {
-          fileRepo.deleteFile(f.project ?? resolveFileProject(f.filePath, this.opts.boundaries), f.filePath);
+        for (const boundary of boundaries) {
+          const projectFiles = fileRepo.getAllFiles(boundary.project);
+          for (const f of projectFiles) {
+            fileRepo.deleteFile(f.project ?? boundary.project, f.filePath);
+          }
+        }
+        const parseFn = this.opts.parseSourceFn ?? parseSource;
+        for (const fd of preread) {
+          const project = resolveFileProject(fd.filePath, boundaries);
+          const parsed = parseFn(toAbsolutePath(projectRoot, fd.filePath), fd.text);
+          parseCache.set(fd.filePath, parsed);
+          fileRepo.upsertFile({
+            project,
+            filePath: fd.filePath,
+            mtimeMs: fd.mtimeMs,
+            size: fd.size,
+            contentHash: fd.contentHash,
+            updatedAt: new Date().toISOString(),
+          });
+          indexFileSymbols({ parsed, project, filePath: fd.filePath, contentHash: fd.contentHash, symbolRepo });
+          totalRelations += indexFileRelations({
+            ast: parsed.program as any,
+            project,
+            filePath: fd.filePath,
+            relationRepo,
+            projectRoot,
+            tsconfigPaths,
+          });
+          totalSymbols += symbolRepo.getFileSymbols(project, fd.filePath).length;
         }
       });
     } else {
       processDeleted();
+      const counts = await processChanged();
+      totalSymbols = counts.symbols;
+      totalRelations = counts.relations;
+      allFailedFiles = counts.failedFiles;
     }
-
-    await processChanged();
 
     // ── Move detection: retarget relations ────────────────────────────────
     for (const [oldFile, syms] of deletedSymbols) {
@@ -281,18 +363,21 @@ export class IndexCoordinator {
     return {
       indexedFiles: changed.length,
       removedFiles: deleted.length,
-      totalSymbols: 0,
-      totalRelations: 0,
+      totalSymbols,
+      totalRelations,
       durationMs: Date.now() - start,
+      changedFiles: changed.map((f) => f.filePath),
+      deletedFiles: [...deleted],
+      failedFiles: allFailedFiles,
     };
   }
 
-  /** Reads, parses, and indexes a single file. */
+  /** Reads, parses, and indexes a single file. Returns symbol and relation counts. */
   private async _processFile(
     filePath: string,
     knownHash: string | undefined,
     tsconfigPaths: unknown,
-  ): Promise<void> {
+  ): Promise<{ symbolCount: number; relCount: number }> {
     const { projectRoot, boundaries } = this.opts;
     const { fileRepo, symbolRepo, relationRepo, parseCache } = this.opts;
 
@@ -322,7 +407,7 @@ export class IndexCoordinator {
     indexFileSymbols({ parsed, project, filePath, contentHash, symbolRepo });
 
     // ── Index relations ────────────────────────────────────────────────────
-    indexFileRelations({
+    const relCount = indexFileRelations({
       ast: parsed.program,
       project,
       filePath,
@@ -330,6 +415,9 @@ export class IndexCoordinator {
       projectRoot,
       tsconfigPaths,
     });
+
+    const symbolCount = symbolRepo.getFileSymbols(project, filePath).length;
+    return { symbolCount, relCount };
   }
 
   /** Fires all registered callbacks, logging but not propagating errors. */

@@ -141,4 +141,37 @@ export class SymbolRepository {
       .where(and(eq(symbols.project, project), eq(symbols.filePath, filePath)))
       .run();
   }
+
+  /**
+   * Flexible search across symbols with optional FTS5 full-text query and column filters.
+   * Used by the search module's symbolSearch function.
+   */
+  searchByQuery(opts: {
+    ftsQuery?: string;
+    kind?: string;
+    filePath?: string;
+    isExported?: boolean;
+    project?: string;
+    limit: number;
+  }): (SymbolRecord & { id: number })[] {
+    return this.db.drizzleDb
+      .select()
+      .from(symbols)
+      .where(
+        and(
+          opts.ftsQuery
+            ? sql`${symbols.id} IN (SELECT rowid FROM symbols_fts WHERE symbols_fts MATCH ${opts.ftsQuery})`
+            : undefined,
+          opts.project !== undefined ? eq(symbols.project, opts.project) : undefined,
+          opts.kind ? eq(symbols.kind, opts.kind) : undefined,
+          opts.filePath !== undefined ? eq(symbols.filePath, opts.filePath) : undefined,
+          opts.isExported !== undefined
+            ? eq(symbols.isExported, opts.isExported ? 1 : 0)
+            : undefined,
+        ),
+      )
+      .orderBy(symbols.name)
+      .limit(opts.limit)
+      .all() as (SymbolRecord & { id: number })[];
+  }
 }

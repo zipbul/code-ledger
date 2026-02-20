@@ -6,7 +6,11 @@ const mockExtractRelations = mock((_ast: any, _filePath: string, _tsconfig?: any
 // ── Mock ../common/path-utils ──────────────────────────────────────────────
 const mockToRelativePath = mock((_root: string, _abs: string) => '');
 const mockToAbsolutePath = mock((_root: string, _rel: string) => '');
-
+mock.module('../extractor/relation-extractor', () => ({ extractRelations: mockExtractRelations }));
+mock.module('../common/path-utils', () => ({
+  toRelativePath: mockToRelativePath,
+  toAbsolutePath: mockToAbsolutePath,
+}));
 import { indexFileRelations } from './relation-indexer';
 
 const PROJECT = 'test-project';

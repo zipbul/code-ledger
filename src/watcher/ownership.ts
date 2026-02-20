@@ -6,7 +6,7 @@ interface WatcherOwnerRow {
 }
 
 export interface WatcherOwnerStore {
-  transaction<T>(fn: () => T): T;
+  immediateTransaction<T>(fn: () => T): T;
   selectOwner(): WatcherOwnerRow | undefined;
   insertOwner(pid: number): void;
   replaceOwner(pid: number): void;
@@ -47,7 +47,7 @@ export function acquireWatcherRole(
   const isAlive = options.isAlive ?? defaultIsAlive;
   const staleAfterSeconds = options.staleAfterSeconds ?? 90;
 
-  return db.transaction(() => {
+  return db.immediateTransaction(() => {
     const owner = db.selectOwner();
     if (!owner) {
       db.insertOwner(pid);

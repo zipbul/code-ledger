@@ -6,7 +6,8 @@ const mockExtractSymbols = mock((_parsed: any) => [] as any[]);
 
 // ── Mock ../common/hasher ────────────────────────────────────────────────────
 const mockHashString = mock((_input: string) => 'fp-hash');
-
+mock.module('../extractor/symbol-extractor', () => ({ extractSymbols: mockExtractSymbols }));
+mock.module('../common/hasher', () => ({ hashString: mockHashString }));
 import { indexFileSymbols } from './symbol-indexer';
 
 const PROJECT = 'test-project';

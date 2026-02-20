@@ -80,8 +80,9 @@ export class DbConnection {
   /**
    * Runs `fn` inside a transaction (BEGIN/COMMIT) or a SAVEPOINT when already
    * inside a transaction (nested call). Rolls back on throw.
+   * The `DbConnection` instance is passed as the first argument to `fn`.
    */
-  transaction<T>(fn: () => T): T {
+  transaction<T>(fn: (tx: DbConnection) => T): T {
     const db = this._requireClient();
 
     if (this.txDepth === 0) {
@@ -89,7 +90,7 @@ export class DbConnection {
       // automatic BEGIN / COMMIT / ROLLBACK handling.
       this.txDepth++;
       try {
-        return db.transaction(fn)();
+        return db.transaction(() => fn(this))();
       } finally {
         this.txDepth--;
       }
@@ -99,7 +100,7 @@ export class DbConnection {
     const sp = `sp_${this.txDepth++}`;
     db.run(`SAVEPOINT "${sp}"`);
     try {
-      const result = fn();
+      const result = fn(this);
       db.run(`RELEASE SAVEPOINT "${sp}"`);
       return result;
     } catch (err) {
@@ -108,6 +109,24 @@ export class DbConnection {
       throw err;
     } finally {
       this.txDepth--;
+    }
+  }
+
+  /**
+   * Runs `fn` inside a BEGIN IMMEDIATE transaction.
+   * Acquires a write lock immediately — used for owner election.
+   * Rolls back on throw.
+   */
+  immediateTransaction<T>(fn: () => T): T {
+    const db = this._requireClient();
+    db.run('BEGIN IMMEDIATE');
+    try {
+      const result = fn();
+      db.run('COMMIT');
+      return result;
+    } catch (err) {
+      db.run('ROLLBACK');
+      throw err;
     }
   }
 
@@ -129,6 +148,42 @@ export class DbConnection {
       .query("SELECT name FROM sqlite_master WHERE type = 'table'")
       .all() as Array<{ name: string }>;
     return rows.map((r) => r.name);
+  }
+
+  // ── WatcherOwnerStore implementation ───────────────────────────────────
+
+  selectOwner(): { pid: number; heartbeat_at: string } | undefined {
+    const row = this._requireClient()
+      .prepare('SELECT pid, heartbeat_at FROM watcher_owner WHERE id = 1')
+      .get() as { pid: number; heartbeat_at: string } | null;
+    return row ?? undefined;
+  }
+
+  insertOwner(pid: number): void {
+    const now = new Date().toISOString();
+    this._requireClient()
+      .prepare('INSERT INTO watcher_owner (id, pid, started_at, heartbeat_at) VALUES (1, ?, ?, ?)')
+      .run(pid, now, now);
+  }
+
+  replaceOwner(pid: number): void {
+    const now = new Date().toISOString();
+    this._requireClient()
+      .prepare('INSERT OR REPLACE INTO watcher_owner (id, pid, started_at, heartbeat_at) VALUES (1, ?, ?, ?)')
+      .run(pid, now, now);
+  }
+
+  touchOwner(pid: number): void {
+    const now = new Date().toISOString();
+    this._requireClient()
+      .prepare('UPDATE watcher_owner SET heartbeat_at = ? WHERE id = 1 AND pid = ?')
+      .run(now, pid);
+  }
+
+  deleteOwner(pid: number): void {
+    this._requireClient()
+      .prepare('DELETE FROM watcher_owner WHERE id = 1 AND pid = ?')
+      .run(pid);
   }
 
   private _requireClient(): Database {

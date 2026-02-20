@@ -19,6 +19,7 @@ function createFakeDb(initialRow?: Row): WatcherOwnerStore & {
     set row(v: Row) { state.row = v; },
 
     transaction: <T>(fn: () => T): T => fn(),
+    immediateTransaction: <T>(fn: () => T): T => fn(),
     selectOwner: mock(() => state.row),
     insertOwner: mock((pid: number) => {
       state.row = { pid, heartbeat_at: new Date().toISOString() };
@@ -240,6 +241,24 @@ describe("acquireWatcherRole", () => {
     });
 
     expect(role).toBe("reader");
+  });
+
+  // ── C-1: immediateTransaction 사용 검증 ────────────────────────────────────
+
+  // [HP] acquireWatcherRole은 transaction이 아닌 immediateTransaction을 사용해야 한다
+  it("should use immediateTransaction instead of transaction when acquiring watcher role", () => {
+    let immediateTransactionCalled = false;
+    const db = {
+      ...createFakeDb(),
+      immediateTransaction: <T>(fn: () => T): T => {
+        immediateTransactionCalled = true;
+        return fn();
+      },
+    } as any;
+
+    acquireWatcherRole(db, 100, { now: () => 0, isAlive: () => false, staleAfterSeconds: 90 });
+
+    expect(immediateTransactionCalled).toBe(true);
   });
 });
 

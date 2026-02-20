@@ -1,4 +1,4 @@
-import { eq, and, isNull, sql } from 'drizzle-orm';
+import { eq, and, isNull, or, sql } from 'drizzle-orm';
 import { relations as relationsTable } from '../schema';
 import type { DbConnection } from '../connection';
 
@@ -64,7 +64,10 @@ export class RelationRepository {
           and(
             eq(relationsTable.project, project),
             eq(relationsTable.srcFilePath, srcFilePath),
-            eq(relationsTable.srcSymbolName, srcSymbolName),
+            or(
+              eq(relationsTable.srcSymbolName, srcSymbolName),
+              isNull(relationsTable.srcSymbolName),
+            ),
           ),
         )
         .all();
@@ -142,6 +145,52 @@ export class RelationRepository {
   /**
    * Retargets all relations pointing at `(oldFile, oldSymbol)` to `(newFile, newSymbol)`.
    */
+  /**
+   * Flexible search across relations with optional column filters.
+   * Used by the search module's relationSearch function.
+   */
+  searchRelations(opts: {
+    srcFilePath?: string;
+    srcSymbolName?: string;
+    dstFilePath?: string;
+    dstSymbolName?: string;
+    type?: string;
+    project?: string;
+    limit: number;
+  }): RelationRecord[] {
+    return this.db.drizzleDb
+      .select({
+        project: relationsTable.project,
+        type: relationsTable.type,
+        srcFilePath: relationsTable.srcFilePath,
+        srcSymbolName: relationsTable.srcSymbolName,
+        dstFilePath: relationsTable.dstFilePath,
+        dstSymbolName: relationsTable.dstSymbolName,
+        metaJson: relationsTable.metaJson,
+      })
+      .from(relationsTable)
+      .where(
+        and(
+          opts.project !== undefined ? eq(relationsTable.project, opts.project) : undefined,
+          opts.srcFilePath !== undefined
+            ? eq(relationsTable.srcFilePath, opts.srcFilePath)
+            : undefined,
+          opts.srcSymbolName !== undefined
+            ? eq(relationsTable.srcSymbolName, opts.srcSymbolName)
+            : undefined,
+          opts.dstFilePath !== undefined
+            ? eq(relationsTable.dstFilePath, opts.dstFilePath)
+            : undefined,
+          opts.dstSymbolName !== undefined
+            ? eq(relationsTable.dstSymbolName, opts.dstSymbolName)
+            : undefined,
+          opts.type !== undefined ? eq(relationsTable.type, opts.type) : undefined,
+        ),
+      )
+      .limit(opts.limit)
+      .all();
+  }
+
   retargetRelations(
     project: string,
     oldFile: string,

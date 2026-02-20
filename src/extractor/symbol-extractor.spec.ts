@@ -9,6 +9,14 @@ const mockGetLineColumn = mock((_offsets: number[], _offset: number) => ({ line:
 // ── Mock ../parser/jsdoc-parser ──
 const mockParseJsDoc = mock((_commentText: string) => ({ description: '', tags: [] }));
 
+mock.module('../parser/source-position', () => ({
+  buildLineOffsets: mockBuildLineOffsets,
+  getLineColumn: mockGetLineColumn,
+}));
+mock.module('../parser/jsdoc-parser', () => ({
+  parseJsDoc: mockParseJsDoc,
+}));
+
 import { extractSymbols } from './symbol-extractor';
 
 function makeFixture(source: string, filePath = '/project/src/index.ts'): ParsedFile {

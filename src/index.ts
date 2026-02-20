@@ -3,3 +3,8 @@ export * from "./common";
 export * from "./watcher";
 export * from "./parser";
 export * from "./extractor";
+export * from "./store";
+export * from "./indexer";
+export * from "./search";
+export { CodeLedger } from "./code-ledger";
+export type { CodeLedgerOptions } from "./code-ledger";

@@ -43,7 +43,7 @@ export interface IndexFileRelationsOptions {
  *   does NOT start with `..`) are stored.
  * - All absolute paths are normalised to project-root-relative paths.
  */
-export function indexFileRelations(opts: IndexFileRelationsOptions): void {
+export function indexFileRelations(opts: IndexFileRelationsOptions): number {
   const { ast, project, filePath, relationRepo, projectRoot, tsconfigPaths } = opts;
 
   const absFilePath = toAbsolutePath(projectRoot, filePath);
@@ -71,4 +71,5 @@ export function indexFileRelations(opts: IndexFileRelationsOptions): void {
   }
 
   relationRepo.replaceFileRelations(project, filePath, rows);
+  return rows.length;
 }

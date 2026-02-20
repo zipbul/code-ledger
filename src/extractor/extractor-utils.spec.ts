@@ -53,7 +53,7 @@ describe('resolveImport', () => {
 
     const result = resolveImport('/project/src/index.ts', './utils.ts');
 
-    expect(result).toBe('/project/src/utils.ts');
+    expect(result).toEqual(['/project/src/utils.ts']);
     expect(mockDirname).toHaveBeenCalledWith('/project/src/index.ts');
     expect(mockResolve).toHaveBeenCalledWith('/project/src', './utils.ts');
   });
@@ -65,7 +65,7 @@ describe('resolveImport', () => {
 
     const result = resolveImport('/project/src/index.ts', './utils');
 
-    expect(result).toBe('/project/src/utils.ts');
+    expect(result).toContain('/project/src/utils.ts');
     expect(mockExtname).toHaveBeenCalledWith('/project/src/utils');
   });
 
@@ -76,7 +76,7 @@ describe('resolveImport', () => {
 
     const result = resolveImport('/project/src/nested/index.ts', '../helpers');
 
-    expect(result).toBe('/project/src/helpers.ts');
+    expect(result).toContain('/project/src/helpers.ts');
     expect(mockDirname).toHaveBeenCalledWith('/project/src/nested/index.ts');
     expect(mockResolve).toHaveBeenCalledWith('/project/src/nested', '../helpers');
   });
@@ -88,7 +88,7 @@ describe('resolveImport', () => {
 
     const result = resolveImport('/project/src/a/b/c.ts', '../../utils');
 
-    expect(result).toBe('/project/src/utils.ts');
+    expect(result).toContain('/project/src/utils.ts');
     expect(mockResolve).toHaveBeenCalledWith('/project/src/a/b', '../../utils');
   });
 
@@ -103,7 +103,7 @@ describe('resolveImport', () => {
     };
     const result = resolveImport('/project/src/index.ts', '@utils/formatter', tsconfigPaths);
 
-    expect(result).toBe('/project/src/utils/formatter.ts');
+    expect(result).toContain('/project/src/utils/formatter.ts');
     expect(mockResolve).toHaveBeenCalledWith('/project', 'src/utils/formatter');
   });
 
@@ -117,19 +117,19 @@ describe('resolveImport', () => {
     };
     const result = resolveImport('/project/src/a.ts', '@root', tsconfigPaths);
 
-    expect(result).toBe('/project/src/index.ts');
+    expect(result).toContain('/project/src/index.ts');
     expect(mockResolve).toHaveBeenCalledWith('/project', 'src/index');
   });
 
   // NE — external packages
   it('should return null when import specifier is a bare npm package name', () => {
     const result = resolveImport('/project/src/index.ts', 'lodash');
-    expect(result).toBeNull();
+    expect(result).toEqual([]);
   });
 
   it('should return null when import specifier is a scoped npm package', () => {
     const result = resolveImport('/project/src/index.ts', '@types/node');
-    expect(result).toBeNull();
+    expect(result).toEqual([]);
   });
 
   it('should return null when import specifier does not match any tsconfig path alias', () => {
@@ -138,7 +138,7 @@ describe('resolveImport', () => {
       paths: new Map([['@utils/*', ['src/utils/*']]]),
     };
     const result = resolveImport('/project/src/index.ts', '@other/lib', tsconfigPaths);
-    expect(result).toBeNull();
+    expect(result).toEqual([]);
   });
 
   // ED
@@ -149,7 +149,7 @@ describe('resolveImport', () => {
 
     const result = resolveImport('/project/src/index.ts', '.');
 
-    expect(result).toBe('/project/src.ts');
+    expect(result).toContain('/project/src.ts');
   });
 
   // ID
@@ -160,7 +160,7 @@ describe('resolveImport', () => {
 
     const r1 = resolveImport('/project/src/a.ts', './b');
     const r2 = resolveImport('/project/src/a.ts', './b');
-    expect(r1).toBe(r2);
+    expect(r1).toEqual(r2);
   });
 
   // tsconfig — append .ts to alias result when no extension
@@ -174,7 +174,7 @@ describe('resolveImport', () => {
     };
     const result = resolveImport('/project/src/index.ts', '@lib/utils', tsconfigPaths);
 
-    expect(result).toBe('/project/lib/utils.ts');
+    expect(result).toContain('/project/lib/utils.ts');
     expect(mockResolve).toHaveBeenCalledWith('/project', 'lib/utils');
   });
 
@@ -189,7 +189,39 @@ describe('resolveImport', () => {
     };
     const result = resolveImport('/project/src/index.ts', '@lib/utils', tsconfigPaths);
 
-    expect(result).toBe('/project/lib/utils.ts');
+    expect(result).toEqual(['/project/lib/utils.ts']);
+  });
+
+  // ── A-4: barrel pattern ───────────────────────────────────────────────────
+
+  // [NE/A-4] 확장자 없는 상대경로는 .ts 뿐 아니라 /index.ts 후보도 포함해야 한다
+  it('should include both .ts and /index.ts candidates when relative import has no extension', () => {
+    mockDirname.mockReturnValue('/project/src');
+    mockResolve.mockReturnValue('/project/src/utils');
+    mockExtname.mockReturnValue('');
+
+    const result = resolveImport('/project/src/index.ts', './utils');
+
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toContain('/project/src/utils.ts');
+    expect(result).toContain('/project/src/utils/index.ts');
+  });
+
+  // ── B-4: .mts/.cts extension ──────────────────────────────────────────────
+
+  // [NE/B-4] 확장자 없는 상대경로는 .mts, .cts, /index.mts, /index.cts 후보도 포함해야 한다
+  it('should include .mts, .cts, /index.mts, /index.cts candidates when relative import has no extension', () => {
+    mockDirname.mockReturnValue('/project/src');
+    mockResolve.mockReturnValue('/project/src/utils');
+    mockExtname.mockReturnValue('');
+
+    const result = resolveImport('/project/src/index.ts', './utils');
+
+    expect(Array.isArray(result)).toBe(true);
+    expect(result).toContain('/project/src/utils.mts');
+    expect(result).toContain('/project/src/utils.cts');
+    expect(result).toContain('/project/src/utils/index.mts');
+    expect(result).toContain('/project/src/utils/index.cts');
   });
 });
 
@@ -198,17 +230,17 @@ describe('resolveImport', () => {
 // ============================================================
 describe('buildImportMap', () => {
   const mockResolveImportFn = mock(
-    (_currentFilePath: string, _importPath: string, _tsconfigPaths?: any) => null as string | null,
+    (_currentFilePath: string, _importPath: string, _tsconfigPaths?: any) => [] as string[],
   );
 
   beforeEach(() => {
     mockResolveImportFn.mockClear();
-    mockResolveImportFn.mockReturnValue(null);
+    mockResolveImportFn.mockReturnValue([]);
   });
 
   // HP
   it('should map local name to importedName and resolved path when declaration has a named specifier', () => {
-    mockResolveImportFn.mockReturnValue(`${FAKE_PROJECT}/src/utils.ts`);
+    mockResolveImportFn.mockReturnValue([`${FAKE_PROJECT}/src/utils.ts`]);
 
     const ast = fakeAst([fakeImportDecl('./utils', [fakeNamedSpec('foo', 'foo')])]);
     const map = buildImportMap(ast, `${FAKE_PROJECT}/src/index.ts`, undefined, mockResolveImportFn);
@@ -221,7 +253,7 @@ describe('buildImportMap', () => {
   });
 
   it('should set importedName to "default" when declaration is a default import', () => {
-    mockResolveImportFn.mockReturnValue(`${FAKE_PROJECT}/src/Foo.ts`);
+    mockResolveImportFn.mockReturnValue([`${FAKE_PROJECT}/src/Foo.ts`]);
 
     const ast = fakeAst([fakeImportDecl('./Foo', [fakeDefaultSpec('Foo')])]);
     const map = buildImportMap(ast, `${FAKE_PROJECT}/src/index.ts`, undefined, mockResolveImportFn);
@@ -231,7 +263,7 @@ describe('buildImportMap', () => {
   });
 
   it('should set importedName to "*" when declaration is a namespace import', () => {
-    mockResolveImportFn.mockReturnValue(`${FAKE_PROJECT}/src/utils.ts`);
+    mockResolveImportFn.mockReturnValue([`${FAKE_PROJECT}/src/utils.ts`]);
 
     const ast = fakeAst([fakeImportDecl('./utils', [fakeNamespaceSpec('utils')])]);
     const map = buildImportMap(ast, `${FAKE_PROJECT}/src/index.ts`, undefined, mockResolveImportFn);
@@ -248,7 +280,7 @@ describe('buildImportMap', () => {
   });
 
   it('should skip mapping when import source is an external npm package', () => {
-    mockResolveImportFn.mockReturnValue(null);
+    mockResolveImportFn.mockReturnValue([]);
 
     const ast = fakeAst([fakeImportDecl('react', [fakeDefaultSpec('React')])]);
     const map = buildImportMap(ast, `${FAKE_PROJECT}/src/index.ts`, undefined, mockResolveImportFn);
@@ -257,7 +289,7 @@ describe('buildImportMap', () => {
   });
 
   it('should map by local alias name when import specifier uses "as" renaming', () => {
-    mockResolveImportFn.mockReturnValue(`${FAKE_PROJECT}/src/utils.ts`);
+    mockResolveImportFn.mockReturnValue([`${FAKE_PROJECT}/src/utils.ts`]);
 
     const ast = fakeAst([fakeImportDecl('./utils', [fakeNamedSpec('bar', 'foo')])]);
     const map = buildImportMap(ast, `${FAKE_PROJECT}/src/index.ts`, undefined, mockResolveImportFn);
@@ -268,7 +300,7 @@ describe('buildImportMap', () => {
   });
 
   it('should map all specifiers when import declaration has multiple named specifiers', () => {
-    mockResolveImportFn.mockReturnValue(`${FAKE_PROJECT}/src/multi.ts`);
+    mockResolveImportFn.mockReturnValue([`${FAKE_PROJECT}/src/multi.ts`]);
 
     const ast = fakeAst([
       fakeImportDecl('./multi', [
@@ -302,7 +334,7 @@ describe('buildImportMap', () => {
 
   // ID
   it('should produce identical maps when called repeatedly with the same AST input', () => {
-    mockResolveImportFn.mockReturnValue(`${FAKE_PROJECT}/src/x.ts`);
+    mockResolveImportFn.mockReturnValue([`${FAKE_PROJECT}/src/x.ts`]);
 
     const ast = fakeAst([fakeImportDecl('./x', [fakeNamedSpec('x', 'x')])]);
     const m1 = buildImportMap(ast, `${FAKE_PROJECT}/src/index.ts`, undefined, mockResolveImportFn);

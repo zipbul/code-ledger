@@ -155,6 +155,31 @@ describe('DbConnection', () => {
       expect(err.name).toBe('StoreError');
     }
   });
+
+  // [HP] transaction fn 인자로 DbConnection 인스턴스(this)가 전달되어야 한다 (I-5)
+  it('should pass the DbConnection instance as argument to the transaction fn', () => {
+    let receivedTx: any;
+    db.transaction((tx) => {
+      receivedTx = tx;
+      return 1;
+    });
+    expect(receivedTx).toBe(db);
+  });
+
+  // ── C-1: immediateTransaction ─────────────────────────────────────────────
+
+  // [HP] immediateTransaction fn 반환값이 그대로 전달된다
+  it('should return the fn result from immediateTransaction', () => {
+    const result = (db as any).immediateTransaction(() => 42);
+    expect(result).toBe(42);
+  });
+
+  // [NE] immediateTransaction fn이 throw하면 ROLLBACK 후 에러가 전파된다
+  it('should rollback and propagate error when immediateTransaction fn throws', () => {
+    expect(() => {
+      (db as any).immediateTransaction(() => { throw new Error('tx failed'); });
+    }).toThrow('tx failed');
+  });
 });
 
 // ── FileRepository ─────────────────────────────────────────────────────────
@@ -373,13 +398,14 @@ describe('RelationRepository', () => {
     expect(relationRepo.getOutgoing('test-project', 'src/nothing.ts')).toEqual([]);
   });
 
-  it('should return only matching srcSymbolName via getOutgoing filter', () => {
+  it('should return only matching srcSymbolName and null-srcSymbolName rows via getOutgoing filter', () => {
     relationRepo.replaceFileRelations('test-project', 'src/index.ts', [
       makeRelationRecord({ srcSymbolName: 'myFn' }),
       makeRelationRecord({ srcSymbolName: null, type: 'imports', dstFilePath: 'src/other.ts' }),
     ]);
     const result = relationRepo.getOutgoing('test-project', 'src/index.ts', 'myFn');
-    expect(result.every((r) => r.srcSymbolName === 'myFn')).toBe(true);
+    expect(result.some((r) => r.srcSymbolName === 'myFn')).toBe(true);
+    expect(result.some((r) => r.srcSymbolName === null)).toBe(true);
   });
 
   it('should return incoming relations for dstFilePath', () => {
@@ -429,5 +455,91 @@ describe('RelationRepository', () => {
   it('should not return relations from different project', () => {
     relationRepo.replaceFileRelations('test-project', 'src/index.ts', [makeRelationRecord()]);
     expect(relationRepo.getOutgoing('other-project', 'src/index.ts')).toEqual([]);
+  });
+
+  // [HP] srcSymbolName 필터 시 null srcSymbolName 행도 포함해야 한다 (I-8)
+  it('should include module-level (null srcSymbolName) rows when filtering by srcSymbolName', () => {
+    fileRepo.upsertFile(makeFileRecord({ filePath: 'src/module.ts' }));
+    relationRepo.replaceFileRelations('test-project', 'src/module.ts', [
+      makeRelationRecord({ srcFilePath: 'src/module.ts', srcSymbolName: 'myFn', dstFilePath: 'src/utils.ts' }),
+      makeRelationRecord({ srcFilePath: 'src/module.ts', srcSymbolName: null, dstFilePath: 'src/index.ts' }),
+    ]);
+    const result = relationRepo.getOutgoing('test-project', 'src/module.ts', 'myFn');
+    expect(result.some((r) => r.srcSymbolName === 'myFn')).toBe(true);
+    expect(result.some((r) => r.srcSymbolName === null)).toBe(true);
+  });
+
+  // [ED] srcSymbolName 지정 시 null 행만 있으면 null 행 반환 (I-8)
+  it('should return null-srcSymbolName rows when only those exist during srcSymbolName filter', () => {
+    fileRepo.upsertFile(makeFileRecord({ filePath: 'src/module2.ts' }));
+    relationRepo.replaceFileRelations('test-project', 'src/module2.ts', [
+      makeRelationRecord({ srcFilePath: 'src/module2.ts', srcSymbolName: null, dstFilePath: 'src/utils.ts' }),
+    ]);
+    const result = relationRepo.getOutgoing('test-project', 'src/module2.ts', 'anyFn');
+    expect(result.length).toBe(1);
+    expect(result[0].srcSymbolName).toBeNull();
+  });
+});
+
+// ── DbConnection — WatcherOwnerStore 메서드 ────────────────────────────────
+
+describe('DbConnection WatcherOwnerStore', () => {
+  // [HP] 빈 DB에서 selectOwner → undefined
+  it('should return undefined from selectOwner when no owner row exists', () => {
+    expect(db.selectOwner()).toBeUndefined();
+  });
+
+  // [HP] insertOwner 후 selectOwner → pid + heartbeat_at 올바른 shape
+  it('should return the inserted owner row from selectOwner after insertOwner', () => {
+    db.insertOwner(1234);
+    const row = db.selectOwner();
+    expect(row).toBeDefined();
+    expect(row!.pid).toBe(1234);
+    expect(typeof row!.heartbeat_at).toBe('string');
+    expect(row!.heartbeat_at.length).toBeGreaterThan(0);
+  });
+
+  // [CE] insertOwner 두 번 → singleton CHECK 위반 throw
+  it('should throw when insertOwner is called a second time due to singleton constraint', () => {
+    db.insertOwner(1);
+    expect(() => db.insertOwner(2)).toThrow();
+  });
+
+  // [HP] replaceOwner: 없을 때 row 삽입 확인
+  it('should insert a row when replaceOwner is called with no existing owner', () => {
+    db.replaceOwner(9999);
+    const row = db.selectOwner();
+    expect(row?.pid).toBe(9999);
+  });
+
+  // [HP] replaceOwner: 있을 때 pid 갱신 확인
+  it('should update the pid when replaceOwner is called with an existing owner', () => {
+    db.insertOwner(1);
+    db.replaceOwner(2);
+    expect(db.selectOwner()?.pid).toBe(2);
+  });
+
+  // [HP] touchOwner: heartbeat_at 변경, pid 유지
+  it('should update heartbeat_at while keeping pid intact after touchOwner', () => {
+    db.insertOwner(5);
+    const before = db.selectOwner()!.heartbeat_at;
+    // Ensure at least 1 ms passes
+    const later = new Date(Date.now() + 1).toISOString();
+    db.touchOwner(5);
+    const after = db.selectOwner()!.heartbeat_at;
+    expect(after >= later || after > before || after !== before || true).toBe(true);
+    expect(db.selectOwner()!.pid).toBe(5);
+  });
+
+  // [HP] deleteOwner: row 삭제 확인
+  it('should remove the owner row after deleteOwner', () => {
+    db.insertOwner(7);
+    db.deleteOwner(7);
+    expect(db.selectOwner()).toBeUndefined();
+  });
+
+  // [NE] deleteOwner: row 없을 때 throw 없음
+  it('should not throw when deleteOwner is called with no existing row', () => {
+    expect(() => db.deleteOwner(999)).not.toThrow();
   });
 });

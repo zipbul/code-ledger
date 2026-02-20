@@ -21,7 +21,7 @@ export function extractImports(
     currentFilePath: string,
     importPath: string,
     tsconfigPaths?: TsconfigPaths,
-  ) => string | null = resolveImport,
+  ) => string[] = resolveImport,
 ): CodeRelation[] {
   const relations: CodeRelation[] = [];
 
@@ -29,8 +29,9 @@ export function extractImports(
   for (const node of (ast as any).body ?? []) {
     if (node.type === 'ImportDeclaration') {
       const sourcePath: string = node.source?.value ?? '';
-      const resolved = resolveImportFn(filePath, sourcePath, tsconfigPaths);
-      if (resolved === null) continue;
+      const candidates = resolveImportFn(filePath, sourcePath, tsconfigPaths);
+      if (candidates.length === 0) continue;
+      const resolved = candidates[0];
 
       const isType = node.importKind === 'type';
       relations.push({
@@ -46,8 +47,9 @@ export function extractImports(
 
     if (node.type === 'ExportAllDeclaration' && node.source) {
       const sourcePath: string = node.source?.value ?? '';
-      const resolved = resolveImportFn(filePath, sourcePath, tsconfigPaths);
-      if (resolved === null) continue;
+      const candidates = resolveImportFn(filePath, sourcePath, tsconfigPaths);
+      if (candidates.length === 0) continue;
+      const resolved = candidates[0];
 
       const isType = node.exportKind === 'type';
       const meta: Record<string, unknown> = { isReExport: true };
@@ -65,8 +67,9 @@ export function extractImports(
 
     if (node.type === 'ExportNamedDeclaration' && node.source) {
       const sourcePath: string = node.source?.value ?? '';
-      const resolved = resolveImportFn(filePath, sourcePath, tsconfigPaths);
-      if (resolved === null) continue;
+      const candidates = resolveImportFn(filePath, sourcePath, tsconfigPaths);
+      if (candidates.length === 0) continue;
+      const resolved = candidates[0];
 
       relations.push({
         type: 'imports',
@@ -84,8 +87,9 @@ export function extractImports(
     if (node.type !== 'ImportExpression') return;
     const sourceValue = getStringLiteralValue(node.source);
     if (!sourceValue) return;
-    const resolved = resolveImportFn(filePath, sourceValue, tsconfigPaths);
-    if (resolved === null) return;
+    const candidates = resolveImportFn(filePath, sourceValue, tsconfigPaths);
+    if (candidates.length === 0) return;
+    const resolved = candidates[0];
 
     relations.push({
       type: 'imports',

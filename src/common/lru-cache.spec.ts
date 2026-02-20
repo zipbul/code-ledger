@@ -228,4 +228,24 @@ describe("LruCache", () => {
     expect(sutAB.get("a")).toBeUndefined();
     expect(sutBA.get("b")).toBeUndefined();
   });
+
+  // ── L-2: undefined 저장값 LRU 순서 갱신 ──────────────────────────────────
+
+  // [ED] undefined 저장 키를 get 하면 LRU 순서가 갱신된다
+  it('should update LRU order when a key storing undefined is accessed via get', () => {
+    const sut = new LruCache<string, number | undefined>(2);
+    sut.set('a', undefined);
+    sut.set('b', 1);
+    sut.get('a'); // 'a'를 MRU로 이동시켜야 함
+    sut.set('c', 2); // 'a'가 아닌 'b'를 evict해야 함
+    expect(sut.has('a')).toBe(true);
+    expect(sut.has('b')).toBe(false);
+  });
+
+  // [ED] null을 저장한 키를 get하면 null을 반환한다 (undefined 아님)
+  it('should return null as a cache hit when null is the stored value', () => {
+    const sut = new LruCache<string, null | number>(1);
+    sut.set('k', null);
+    expect(sut.get('k')).toBeNull();
+  });
 });
